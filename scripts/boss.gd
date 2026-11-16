@@ -151,11 +151,13 @@ func take_damage(amount: float, pos := Vector3.ZERO, _dir := Vector3.ZERO) -> vo
 	health = maxf(health - amount, 0.0)
 	_flash = 1.0
 	Fx.damage_number(get_tree().current_scene, pos, amount, Color(1.0, 0.85, 1.0))
+	Sfx.play_at("enemy_hit", pos, 2.0, 0.7, 0.1)
 	health_changed.emit(health, MAX_HEALTH)
 	if _phase == 1 and health <= MAX_HEALTH * 0.5:
 		_phase = 2
 		_attack_t = 1.0
 		phase_two.emit()
+		Sfx.play("boss_roar", 0.0, 1.15)
 	if health <= 0.0:
 		_die()
 
@@ -168,6 +170,7 @@ func _die() -> void:
 	Fx.shock_ring(scene, global_position + Vector3(0, 0.3, 0), 30.0, 1.0, ENTITY)
 	Game.add_xp(xp_reward)
 	Game.boss_ended.emit()
+	Sfx.play("boss_die")
 	died.emit(self)
 	queue_free()
 
@@ -240,6 +243,7 @@ func _update_attacks(delta: float, player: Node3D, dist: float) -> void:
 	if wave:
 		_windup_kind = "wave"
 		_windup = 1.1
+		Sfx.play_at("boss_charge", global_position + Vector3(0, 4, 0), 0.0)
 		_attack_t = 3.0 if _phase == 1 else 2.2
 	else:
 		_windup_kind = "fan"
@@ -254,6 +258,7 @@ func _fan(player: Node3D, dist: float) -> void:
 	var lead: Vector3 = player.velocity * (dist / BOLT_SPEED) * 0.5
 	var aim: Vector3 = (player.aim_point() + lead - from).normalized()
 	var count := 5 if _phase == 1 else 7
+	Sfx.play_at("boss_fan", from, 0.0, 1.0, 0.05)
 	for i in count:
 		var angle := (float(i) - (count - 1) * 0.5) * 0.11
 		var bolt := Projectile.new()
@@ -266,6 +271,7 @@ func _fan(player: Node3D, dist: float) -> void:
 func _slam() -> void:
 	_core.position.y = 2.6
 	_waves.append([0.0, false])
+	Sfx.play_at("boss_slam", global_position, 0.0, 1.0, 0.04)
 	Fx.shock_ring(get_tree().current_scene, global_position + Vector3(0, 0.25, 0), WAVE_RADIUS, WAVE_TIME, ENTITY)
 	if _phase == 2:
 		await get_tree().create_timer(0.55).timeout
@@ -273,6 +279,7 @@ func _slam() -> void:
 			return
 		_waves.append([0.0, false])
 		Fx.shock_ring(get_tree().current_scene, global_position + Vector3(0, 0.25, 0), WAVE_RADIUS, WAVE_TIME, ENTITY)
+		Sfx.play_at("boss_slam", global_position, -3.0, 1.2, 0.04)
 
 
 ## Die Welle trifft, wenn ihr Rand über die Spielfigur läuft und die gerade

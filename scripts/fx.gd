@@ -133,3 +133,39 @@ static func shock_ring(parent: Node, pos: Vector3, radius: float, time: float, c
 	var tw := mi.create_tween()
 	tw.tween_property(mi, "scale", Vector3(radius, 2.5, radius), time)
 	tw.tween_callback(mi.queue_free)
+
+
+## Gasstoß: kurze helle Wolke entgegen der Schubrichtung.
+static func gas_puff(parent: Node, pos: Vector3, dir: Vector3) -> void:
+	var p := CPUParticles3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3.ONE * 0.16
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.82, 0.86, 0.92)
+	mesh.material = mat
+	p.mesh = mesh
+	p.amount = 16
+	p.lifetime = 0.55
+	p.one_shot = true
+	p.explosiveness = 0.9
+	p.direction = dir
+	p.spread = 24.0
+	p.initial_velocity_min = 4.0
+	p.initial_velocity_max = 11.0
+	p.gravity = Vector3(0, 1.5, 0)
+	p.damping_min = 6.0
+	p.damping_max = 10.0
+	p.scale_amount_min = 0.5
+	p.scale_amount_max = 1.6
+	var shrink := Curve.new()
+	shrink.add_point(Vector2(0, 1))
+	shrink.add_point(Vector2(1, 0))
+	p.scale_amount_curve = shrink
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(p)
+	p.global_position = pos
+	p.emitting = true
+	var tw := p.create_tween()
+	tw.tween_interval(1.0)
+	tw.tween_callback(p.queue_free)

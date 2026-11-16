@@ -15,6 +15,7 @@ class Reticle extends Control:
 	var aiming := false
 	var grapple := false
 	var grapple_cd := 0.0
+	var gas := 2.0
 
 	func _draw() -> void:
 		var c := size * 0.5
@@ -30,6 +31,12 @@ class Reticle extends Control:
 			draw_polyline(pts, Color(0.72, 0.38, 1.0, 0.9), 1.5)
 		elif grapple_cd > 0.0:
 			draw_arc(c, 22.0, -PI * 0.5, -PI * 0.5 + TAU * clampf(grapple_cd, 0.0, 1.0), 24, Color(0.72, 0.38, 1.0, 0.45), 1.5)
+		# Gasladungen: zwei kurze Striche unter dem Fadenkreuz
+		for i in 2:
+			var fill := clampf(gas - i, 0.0, 1.0)
+			var x := c.x - 11.0 + i * 12.0
+			draw_rect(Rect2(x, c.y + 30.0, 10.0, 3.0), Color(0, 0, 0, 0.45))
+			draw_rect(Rect2(x, c.y + 30.0, 10.0 * fill, 3.0), Color(0.86, 0.9, 0.92, 0.85 if fill >= 1.0 else 0.4))
 		if hit > 0.0:
 			var hc := Color(1.0, 0.3, 0.2, hit) if kill else Color(1, 1, 1, hit)
 			for d in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
@@ -103,6 +110,7 @@ func _process(delta: float) -> void:
 	if _player:
 		_reticle.aiming = _player.aiming
 		_reticle.grapple = _player.grapple_ready
+		_reticle.gas = _player.gas
 		_reticle.grapple_cd = _player.grapple_cd / maxf(Game.grapple_cooldown(), 0.01)
 		_reticle.spread = lerpf(_reticle.spread, _player.heat, 1.0 - exp(-delta * 10.0))
 		_reticle.visible = not _player.dead and not Game.busy()
@@ -217,9 +225,9 @@ func _build() -> void:
 	_xp_fill = _bar(bars, 86, 4, ENTITY)
 
 	# Steuerung unten rechts
-	var keys := _label("[Q] Haken    [F] Klaue    [Tab] Arm    [E] Benutzen", 13, Color(0.86, 0.9, 0.92, 0.55))
+	var keys := _label("[Q] Haken    [Leertaste] Abspringen / Gasstoß    [F] Klaue    [Tab] Arm    [E] Benutzen", 13, Color(0.86, 0.9, 0.92, 0.55))
 	keys.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	keys.offset_left = -520
+	keys.offset_left = -760
 	keys.offset_right = -36
 	keys.offset_top = -52
 	keys.offset_bottom = -30
@@ -385,6 +393,7 @@ func _toggle_menu() -> void:
 	if Game.reading or Game.ended or (_player and _player.dead):
 		return
 	Game.menu_open = true
+	Sfx.play("ui_open")
 	_refresh_menu()
 	_menu.visible = true
 	get_tree().paused = true
@@ -394,6 +403,7 @@ func _toggle_menu() -> void:
 func _spend(stat: String) -> void:
 	if Game.spend_point(stat):
 		_refresh_menu()
+		Sfx.play("ui_spend")
 
 
 func _refresh_menu() -> void:

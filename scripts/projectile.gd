@@ -47,4 +47,5 @@ func _on_body(body: Node) -> void:
 	if body.is_in_group("player") and body.has_method("take_damage"):
 		body.take_damage(damage, global_position, velocity.normalized())
 	Fx.impact(get_tree().current_scene, global_position, -velocity.normalized(), Color(1.0, 0.3, 0.12))
+	Sfx.play_at("impact", global_position, -2.0, 0.8, 0.15)
 	queue_free()

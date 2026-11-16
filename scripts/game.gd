@@ -31,7 +31,7 @@ const STATS := {
 	},
 	"arm": {
 		"name": "ARM",
-		"desc": "+6 m Hakenreichweite, kürzere Pause, härtere Klaue.",
+		"desc": "+6 m Seillänge, schneller nachladen, härtere Klaue.",
 	},
 }
 
@@ -163,7 +163,7 @@ func grapple_range() -> float:
 
 
 func grapple_cooldown() -> float:
-	return 1.1 * pow(0.85, stats["arm"])
+	return 0.45 * pow(0.85, stats["arm"])
 
 
 func melee_damage() -> float:

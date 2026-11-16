@@ -143,6 +143,14 @@ func _build_bridge_one() -> void:
 		b.span(Vector3(-4, -6, z - 0.4), Vector3(4, -5.2, z + 0.4), "metal", false)
 	b.strut(Vector3(-6, 14, WALL_NEAR_Z), Vector3(-9, 6, -60), 0.12)
 	b.strut(Vector3(7, 22, WALL_NEAR_Z), Vector3(12, 9, -60), 0.12)
+	# Zwei Träger quer durch die ganze Schlucht: Ankerfläche zum Schwingen
+	b.span(Vector3(14, 20, WALL_FAR_Z), Vector3(19, 24, WALL_NEAR_Z), "mega")
+	b.span(Vector3(-16, 28, WALL_FAR_Z), Vector3(-11, 33, WALL_NEAR_Z), "mega")
+	for z in [-12.0, -36.0, -60.0, -84.0, -108.0, -132.0]:
+		b.box(Vector3(16.5, 19.85, z), Vector3(1.6, 0.3, 0.5), "light_warm", false)
+		b.box(Vector3(-13.5, 27.85, z + 12.0), Vector3(1.6, 0.3, 0.5), "light_cold", false)
+	b.lamp(Vector3(16.5, 18.5, -36), WARM, 2.0, 22.0)
+	b.lamp(Vector3(-13.5, 26.5, -24), COLD, 1.6, 24.0)
 
 
 func _build_node_platform() -> void:
@@ -479,7 +487,7 @@ func _build_story() -> void:
 	_trigger("bridge_mid", Vector3(0, 2, -28), Vector3(6, 5, 4), func() -> void:
 		Game.say("FISHER", "Nach oben kommt hier keiner mehr. Nach unten kommt jeder.")
 		Game.say("FISHER", "Ganz unten schläft etwas. Es träumt, und der Traum steigt auf. Dein Arm ist ein Stück davon."))
-	_trigger("node", Vector3(0, 2, -62), Vector3(8, 5, 4), func() -> void:
+	_trigger("node", Vector3(0, 9, -72), Vector3(24, 18, 24), func() -> void:
 		_checkpoint(Vector3(0, 0.1, -63), 0.0)
 		Game.say("FISHER", "Links im Leitstand flackert ein Terminal. Lies es oder lass es. Es ändert nichts.")
 		Game.set_objective("Sieh dich im Knoten um"))
@@ -487,8 +495,10 @@ func _build_story() -> void:
 		_checkpoint(Vector3(15, 1.2, -72), -PI * 0.5)
 		Game.say("FISHER", "Die Rampe ist weg. Macht nichts.")
 		Game.say("FISHER", "Ziel auf den Träger da oben und drück Q. Der Arm will sowieso raus.")
+		Game.say("FISHER", "Am Seil kannst du lenken. Leertaste: abspringen und den Schwung mitnehmen.")
+		Game.say("FISHER", "In der Luft nochmal Leertaste: Gasstoß. Frag nicht, woher das Gas kommt.")
 		Game.set_objective("Enterhaken [Q]: hinauf zum Verteilerdeck"))
-	_trigger("arena_in", Vector3(39.5, 11, -72), Vector3(5, 8, 8), func() -> void:
+	_trigger("arena_in", Vector3(48, 15, -72), Vector3(22, 16, 34), func() -> void:
 		_checkpoint(Vector3(39, 8.1, -72), -PI * 0.5)
 		Game.say("FISHER", "Fugenläufer. Sie dichten Risse ab. Für sie bist du ein Riss.")
 		Game.say("FISHER", "Rechte Maustaste zielen, linke schießen. Kommen sie zu nah: F. Dann macht es der Arm.")
@@ -496,7 +506,7 @@ func _build_story() -> void:
 	_trigger("bridge_gap", Vector3(54, 10, -93), Vector3(5, 5, 3), func() -> void:
 		_checkpoint(Vector3(54, 8.1, -92), 0.0)
 		Game.say("FISHER", "Wieder ein Loch. Du weißt, was zu tun ist."))
-	_trigger("boss", Vector3(54, 11, -121), Vector3(8, 6, 4), func() -> void:
+	_trigger("boss", Vector3(54, 18, -126), Vector3(40, 20, 14), func() -> void:
 		_checkpoint(Vector3(54, 8.1, -114), 0.0)
 		_boss.activate()
 		Game.say("FISHER", "Der Pförtner. Die CSRU hat ihn gefüttert, bis er die Tür nicht mehr vergessen konnte.")
@@ -554,5 +564,9 @@ func _open_gate(_who: Node) -> void:
 	var tw := create_tween()
 	tw.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	tw.tween_property(_door, "position:y", 20.4, 6.0)
+	tw.parallel().tween_method(func(level: float) -> void: Sfx.loop("door_loop", level), 1.0, 1.0, 6.0)
+	tw.tween_callback(func() -> void:
+		Sfx.loop("door_loop", 0.0)
+		Sfx.play_at("door_stop", _door.global_position))
 	Game.say("FISHER", "Dahinter geht es nur noch nach unten. Ich warte dort auf dich. Wahrscheinlich.")
 	Game.set_objective("Steig hinab")

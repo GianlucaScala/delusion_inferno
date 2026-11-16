@@ -104,9 +104,11 @@ func take_damage(amount: float, pos := Vector3.ZERO, dir := Vector3.ZERO) -> voi
 	_flash = 1.0
 	velocity += dir * 2.5
 	Fx.damage_number(get_tree().current_scene, pos, amount)
+	Sfx.play_at("enemy_hit", global_position + Vector3(0, 1.7, 0), 0.0, 1.0, 0.12)
 	if health <= 0.0:
 		dead = true
 		Game.add_xp(xp_reward)
+		Sfx.play_at("enemy_die", global_position + Vector3(0, 1.7, 0), 0.0, 1.0, 0.1)
 		Fx.debris(get_tree().current_scene, global_position + Vector3(0, 1.6, 0), _shell_mat.duplicate(), 9)
 		Fx.impact(get_tree().current_scene, global_position + Vector3(0, 1.7, 0), Vector3.UP, Color(1.0, 0.4, 0.15))
 		died.emit(self)
@@ -128,6 +130,7 @@ func _physics_process(delta: float) -> void:
 		if not alerted and dist < SIGHT_RANGE and _can_see(player):
 			alerted = true
 			_alert_others()
+			Sfx.play_at("enemy_alert", global_position + Vector3(0, 1.7, 0), 0.0, 1.0, 0.08)
 		if alerted:
 			var flat := Vector3(to_p.x, 0, to_p.z).normalized()
 			var yaw := atan2(-flat.x, -flat.z)
@@ -184,6 +187,7 @@ func _update_fire(delta: float, player: Node3D, dist: float) -> void:
 		if dist < SIGHT_RANGE and _can_see(player):
 			_windup = 0.55
 			_fire_t = randf_range(1.6, 2.8)
+			Sfx.play_at("enemy_charge", global_position + Vector3(0, 1.7, 0), 0.0, 1.0, 0.06)
 		else:
 			_fire_t = 0.4
 
@@ -196,6 +200,7 @@ func _shoot(player: Node3D, dist: float) -> void:
 	bolt.velocity = (target - from).normalized() * BOLT_SPEED
 	bolt.position = from
 	get_tree().current_scene.add_child(bolt)
+	Sfx.play_at("enemy_shot", from, 0.0, 1.0, 0.08)
 
 
 func _can_see(player: Node3D) -> bool:

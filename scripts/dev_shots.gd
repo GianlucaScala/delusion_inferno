@@ -53,6 +53,8 @@ func _shots(player: Node3D) -> void:
 		Game.set_objective("Überlebe den Pförtner")
 		Game.add_xp(60)
 	for view in VIEWS:
+		if "--only-swing" in OS.get_cmdline_user_args():
+			break
 		player.global_position = view[1]
 		player.velocity = Vector3.ZERO
 		player.set_look(view[2], view[3])
@@ -64,27 +66,44 @@ func _shots(player: Node3D) -> void:
 		img.save_png("res://shots/%s.png" % view[0])
 		print("shot ", view[0])
 
+	# Mitten im Schwung: aus dem Lauf an den Träger über der Schlucht
+	while player.dead:
+		await _frames(10)
+	for e in get_tree().get_nodes_in_group("enemy"):
+		e.set_physics_process(false)
+	player.health = Game.max_health()
+	player.grapple_cd = 0.0
+	player.global_position = Vector3(0, 0.1, -20)
+	player.velocity = Vector3(0, 0, -7)
+	player.set_look(0.0, 0.0)
+	await _frames(6)
+	_look_at(player, Vector3(14.5, 21.0, -44))
+	await _frames(2)
+	player._try_grapple()
+	print("swing shot hooked: ", player.grappling)
+	await _frames(40)
+	player.set_look(-0.9, 0.3)
+	for i in 3:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png("res://shots/09_swing.png")
+	print("shot 09_swing")
+
 
 func _check(label: String, ok: bool, detail: Variant = "") -> void:
 	print("%s  %s  %s" % ["PASS" if ok else "FAIL", label, str(detail)])
 
 
 func _test(player: Node3D) -> void:
+	var trace := "--trace" in OS.get_cmdline_user_args()
 	await _frames(30)
 
-	# 1) Haken von der abgerissenen Rampe hinauf aufs Verteilerdeck
-	player.global_position = Vector3(20.5, 3.0, -72)
-	player.velocity = Vector3.ZERO
-	await _frames(20)
-	_look_at(player, Vector3(38.5, 19.2, -72))
-	await _frames(5)
-	player._try_grapple()
-	_check("grapple fires at beam", player.grappling, player._grapple_point)
-	await _frames(240)
-	var p := player.global_position
-	_check("lands on distributor deck", p.x > 36.0 and absf(p.y - 8.0) < 0.6, p)
+	# 0) Ton: alle Dateien geladen, Loops laufen wirklich im Kreis
+	_check("all sounds loaded", Sfx._streams.size() == Sfx.GAIN.size(), "%d / %d" % [Sfx._streams.size(), Sfx.GAIN.size()])
+	var amb: AudioStreamPlayer = Sfx._music["ambient_loop"]["player"]
+	_check("ambient is playing", amb.playing and amb.stream.loop_mode == AudioStreamWAV.LOOP_FORWARD, amb.stream.get_length())
 
-	# 2) Schießen: ein Fugenläufer muss Schaden nehmen und sterben können
+	# 4) Schießen und Klaue (zuerst, solange die Gegner noch am Platz stehen)
 	var enemy: Node3D = null
 	for e in get_tree().get_nodes_in_group("enemy"):
 		if e.get("active") == null:
@@ -92,6 +111,7 @@ func _test(player: Node3D) -> void:
 			break
 	var before: float = enemy.health
 	player.global_position = enemy.global_position + Vector3(-6, 0, 0)
+	player.velocity = Vector3.ZERO
 	await _frames(10)
 	_look_at(player, enemy.global_position + Vector3(0, 1.4, 0))
 	await _frames(3)
@@ -113,7 +133,97 @@ func _test(player: Node3D) -> void:
 		if e.get("active") == null:
 			e.take_damage(999.0, e.global_position)
 
-	# 3) Haken über die gebrochene Brücke
+	# 1) Passiv am Seil: von der abgerissenen Rampe hinauf aufs Verteilerdeck
+	player.global_position = Vector3(20.5, 3.0, -72)
+	player.velocity = Vector3.ZERO
+	await _frames(20)
+	_look_at(player, Vector3(38.5, 19.2, -72))
+	await _frames(5)
+	player._try_grapple()
+	_check("grapple fires at beam", player.grappling, player._grapple_point)
+	var fling := 0.0
+	var hooked_frames := 0
+	for i in 300:
+		await get_tree().physics_frame
+		if player.grappling:
+			hooked_frames += 1
+		elif not player.is_on_floor():
+			fling = maxf(fling, Vector3(player.velocity.x, 0, player.velocity.z).length())
+		if trace and i % 10 == 0:
+			print("  f%03d pos %s vel %s rope %.1f hooked %s floor %s" % [i, player.global_position, player.velocity, player._rope_len, player.grappling, player.is_on_floor()])
+	var p := player.global_position
+	_check("lands on distributor deck", p.x > 36.0 and p.x < 72.0 and absf(p.y - 8.0) < 0.6, p)
+	_check("arrival flings past the anchor", fling >= 10.0 and hooked_frames < 150, "%.1f m/s after %.2f s on the rope" % [fling, hooked_frames / 60.0])
+
+	# 2) Pendel: Seil halten (S), Länge bleibt, Figur schwingt durch
+	player.global_position = Vector3(27.0, 13.0, -72)
+	player.velocity = Vector3.ZERO
+	_look_at(player, Vector3(38.5, 19.2, -72))
+	await _frames(2)
+	Input.action_press("move_back")
+	player._try_grapple()
+	var rope: float = player._rope_len
+	var worst := 0.0
+	var min_x := 99.0
+	var max_x := -99.0
+	var top_speed := 0.0
+	for i in 150:
+		await get_tree().physics_frame
+		if not player.grappling:
+			break
+		worst = maxf(worst, player._grapple_point.distance_to(player.aim_point()) - rope)
+		min_x = minf(min_x, player.global_position.x)
+		max_x = maxf(max_x, player.global_position.x)
+		top_speed = maxf(top_speed, player.velocity.length())
+	_check("rope never stretches while held", player.grappling and worst < 0.25, "rope %.1f m, worst overshoot %.2f m" % [rope, worst])
+	_check("pendulum swings through", max_x - min_x > 8.0 and top_speed > 8.0, "x %.1f..%.1f, top speed %.1f" % [min_x, max_x, top_speed])
+
+	# 3) Abspringen nimmt den Schwung mit, Gasstoß legt nach
+	Input.action_release("move_back")
+	while player.grappling and player.velocity.x < 6.0:
+		await get_tree().physics_frame
+	var before_speed: float = player.velocity.length()
+	player._end_grapple("jump")
+	_check("jump-off keeps momentum", player.velocity.length() >= before_speed and before_speed > 6.0, "%.1f -> %.1f m/s" % [before_speed, player.velocity.length()])
+	await _frames(6)
+	var gas_before: float = player.gas
+	var speed_before: float = player.velocity.length()
+	player._gas_burst(Vector3.ZERO)
+	_check("gas burst uses a charge and adds speed", player.gas < gas_before and player.velocity.length() > speed_before, "gas %.1f -> %.1f, %.1f -> %.1f m/s" % [gas_before, player.gas, speed_before, player.velocity.length()])
+
+	# 3b) Aus dem Lauf an den Träger über der Schlucht: Bogen statt Gerade
+	player.global_position = Vector3(0, 0.1, -20)
+	player.velocity = Vector3.ZERO
+	player.set_look(0.0, 0.0)
+	await _frames(10)
+	Input.action_press("move_forward")
+	Input.action_press("sprint")
+	await _frames(40)
+	_look_at(player, Vector3(14.5, 21.0, -44))
+	await _frames(2)
+	player._try_grapple()
+	Input.action_release("move_forward")
+	Input.action_release("sprint")
+	var hooked_at: Vector3 = player.global_position
+	var swing_top := 0.0
+	var bend := 0.0
+	var line: Vector3 = (player._grapple_point - player.aim_point()).normalized()
+	for i in 200:
+		await get_tree().physics_frame
+		if not player.grappling:
+			break
+		swing_top = maxf(swing_top, player.velocity.length())
+		var rel: Vector3 = player.global_position - hooked_at
+		bend = maxf(bend, (rel - line * rel.dot(line)).length())
+		if trace and i % 6 == 0:
+			print("  s%03d pos %s vel %s rope %.1f" % [i, player.global_position, player.velocity, player._rope_len])
+	_check("running hook bends into an arc", player.grappling == false and bend > 1.0 and swing_top > 15.0, "%.1f m off the straight line, top speed %.1f" % [bend, swing_top])
+	player.global_position = Vector3(54, 8.1, -75)
+	player.velocity = Vector3.ZERO
+	await _frames(20)
+	player.health = Game.max_health()
+
+	# 5) Haken über die gebrochene Brücke
 	player.global_position = Vector3(54, 8.1, -98.5)
 	player.velocity = Vector3.ZERO
 	await _frames(20)
@@ -121,15 +231,20 @@ func _test(player: Node3D) -> void:
 	await _frames(5)
 	player._try_grapple()
 	_check("grapple fires at portal", player.grappling, player._grapple_point)
-	await _frames(200)
+	for i in 240:
+		await get_tree().physics_frame
+		if trace and i % 10 == 0:
+			print("  g%03d pos %s vel %s hooked %s" % [i, player.global_position, player.velocity, player.grappling])
 	p = player.global_position
-	_check("crosses the bridge gap", p.z < -109.5 and absf(p.y - 8.0) < 0.6, p)
+	_check("crosses the bridge gap", p.z < -109.5 and p.z > -150.0 and absf(p.y - 8.0) < 0.6, p)
 
-	# 4) Boss: aktivieren, Welle abwarten, niederkämpfen
+	# 6) Boss: aktivieren, Welle abwarten, niederkämpfen
 	player.global_position = Vector3(54, 8.1, -121)
+	player.velocity = Vector3.ZERO
 	await _frames(30)
 	var boss: Node3D = get_parent().get_node("Level")._boss
 	_check("boss activates on entry", boss.active)
+	_check("boss music fades in", Sfx._music.has("boss_music_loop") and Sfx._music["boss_music_loop"]["target"] == 1.0)
 	var hp0: float = player.health
 	await _frames(600)
 	_check("boss hurts an idle player", player.health < hp0 or player.dead, "%s -> %s" % [hp0, player.health])
@@ -143,7 +258,7 @@ func _test(player: Node3D) -> void:
 	_check("leveled up", Game.level > 1 and Game.skill_points > 0, "level %d, points %d" % [Game.level, Game.skill_points])
 	_check("spend point raises max health", Game.spend_point("fleisch") and Game.max_health() == 120.0)
 
-	# 5) Tor öffnen und in den Schacht fallen
+	# 7) Tor öffnen und in den Schacht fallen
 	while player.dead:
 		await _frames(10)
 	level._gate_switch.interact(player)
@@ -158,4 +273,5 @@ func _test(player: Node3D) -> void:
 	Input.action_release("move_forward")
 	Input.action_release("sprint")
 	_check("falling into the shaft ends the layer", Game.ended, player.global_position)
+	_check("ambient looped past its 16 s", amb.playing and amb.get_playback_position() < amb.stream.get_length(), "pos %.1f s" % amb.get_playback_position())
 	print("TEST DONE")

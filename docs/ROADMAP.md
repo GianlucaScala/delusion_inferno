@@ -9,7 +9,8 @@ Kern-Loop steht: laufen, haken, schießen, schlagen, leveln, Boss, absteigen.
 ## Als Nächstes (macht aus dem Prototyp ein Fundament)
 
 1. **Speichern/Laden** und Layer-Wechsel (jede Ebene eine eigene Szene, `Game` trägt die Werte).
-2. **Ton**: Schritte, Waffe, Haken, Drone-Ambient. Musik-Slots für Ricos Tracks.
+2. **Ton**: Platzhalter sind drin (synthetisch, `audio/`). Offen: echte Aufnahmen und Ricos Tracks,
+   Lautstärke-Regler im Optionsmenü (Busse `SFX` und `Music` existieren schon).
 3. **Echte Modelle und Animationen** statt Box-Figuren (Robins Art, Import als glTF).
 4. **Gegner-Vielfalt**: Nahkämpfer, Schwebende, Schildträger; Gegner mit dem Haken heranziehen.
 5. **Hauptmenü, Pause, Optionen** (Empfindlichkeit, Lautstärke, Tastenbelegung).

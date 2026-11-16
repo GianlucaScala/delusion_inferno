@@ -23,7 +23,15 @@ const FIRE_INTERVAL := 0.2
 const DAMAGE := 20.0
 const HEAT_PER_SHOT := 0.13
 const INTERACT_RANGE := 2.6
-const GRAPPLE_SPEED := 24.0
+const REEL_SPEED := 21.0        # so schnell holt die Winde das Seil ein (m/s)
+const REEL_ACCEL := 46.0
+const SWING_STEER := 15.0       # Lenken, solange man am Seil hängt
+const GAS_IMPULSE := 9.5        # Gasstoß in der Luft
+const GAS_CHARGES := 2.0
+const GAS_RECHARGE := 2.4       # Sekunden pro Ladung (am Boden sofort voll)
+const MAX_SPEED := 32.0
+const ARRIVE_FLING := 11.0      # so schnell wirft einen der Haken über den Anker hinaus
+const ARRIVE_LIFT := 6.0
 const MELEE_COOLDOWN := 0.65
 const ENTITY := Color(0.62, 0.18, 1.0)
 
@@ -35,6 +43,7 @@ var dead := false
 var grappling := false
 var grapple_ready := false      # Fadenkreuz liegt auf etwas in Reichweite
 var grapple_cd := 0.0
+var gas := GAS_CHARGES          # Ladungen für den Gasstoß
 
 var _yaw := 0.0
 var _pitch := -0.08
@@ -51,6 +60,15 @@ var _focus: Node = null
 var _prompt := ""
 var _grapple_point := Vector3.ZERO
 var _grapple_time := 0.0
+var _rope_len := 0.0
+var _reel_rate := 0.0
+var _grapple_dir := Vector3.FORWARD     # waagerechte Richtung vom Absprung zum Anker
+var _fling_left := 0.0                  # so lange trägt der Wurf noch über Kanten
+var _fling_speed := 0.0
+var _was_on_floor := true
+var _fall_speed := 0.0
+var _step_index := 0
+var _cam_roll := 0.0
 
 var _pivot: Node3D
 var _pitch_node: Node3D
@@ -276,6 +294,7 @@ func take_damage(amount: float, _pos := Vector3.ZERO, _dir := Vector3.ZERO) -> v
 	_shake = minf(_shake + 0.25, 0.6)
 	health_changed.emit(health, Game.max_health())
 	damaged.emit()
+	Sfx.play("hurt", 0.0, 1.0, 0.08)
 	if health <= 0.0:
 		_die()
 
@@ -320,13 +339,17 @@ func _process(delta: float) -> void:
 	_shake = maxf(_shake - delta * 1.8, 0.0)
 	_pivot.rotation.y = _yaw
 	_pitch_node.rotation.x = _pitch
-	var target_len := 1.7 if aiming else (4.2 if grappling else 3.3)
-	var target_fov := 46.0 if aiming else (78.0 if grappling else 68.0)
+	var rush := clampf((velocity.length() - 8.0) / 22.0, 0.0, 1.0)    # 0 = zu Fuß, 1 = voller Schwung
+	var target_len := 1.7 if aiming else lerpf(3.3, 4.6, rush)
+	var target_fov := 46.0 if aiming else lerpf(68.0, 92.0, rush)
 	var k := 1.0 - exp(-delta * 10.0)
 	_arm.spring_length = lerpf(_arm.spring_length, target_len, k)
 	_cam.fov = lerpf(_cam.fov, target_fov, k)
 	_cam.h_offset = randf_range(-1, 1) * _shake * 0.08
 	_cam.v_offset = randf_range(-1, 1) * _shake * 0.08
+	var side := velocity.dot(_pivot.global_transform.basis.x)
+	_cam_roll = lerpf(_cam_roll, clampf(-side * 0.012, -0.16, 0.16) * rush, 1.0 - exp(-delta * 5.0))
+	_cam.rotation.z = _cam_roll
 	_muzzle_light.light_energy = maxf(_muzzle_light.light_energy - delta * 40.0, 0.0)
 	_arm_glow.emission_energy_multiplier = lerpf(_arm_glow.emission_energy_multiplier, 7.0 if grappling else 2.0 + sin(Time.get_ticks_msec() * 0.003) * 0.6, k)
 	_update_cable()
@@ -354,6 +377,8 @@ func _physics_process(delta: float) -> void:
 	if not blocked:
 		if Input.is_action_pressed("fire"):
 			_try_fire()
+		if Input.is_action_just_pressed("fire") and overheated:
+			Sfx.play("shot_dry")
 		if Input.is_action_just_pressed("melee"):
 			_try_melee()
 	_update_melee()
@@ -361,6 +386,13 @@ func _physics_process(delta: float) -> void:
 	_update_model(delta)
 	_update_focus()
 	_probe_grapple()
+
+	# Gas lädt nach: am Boden sofort, in der Luft langsam
+	if is_on_floor():
+		gas = GAS_CHARGES
+	else:
+		gas = minf(gas + delta / GAS_RECHARGE, GAS_CHARGES)
+	_update_motion_audio()
 
 	if _since_damage > 5.0 and health < Game.max_health():
 		health = minf(health + 9.0 * delta, Game.max_health())
@@ -382,25 +414,69 @@ func _walk_move(delta: float, blocked: bool) -> void:
 	elif Input.is_action_pressed("sprint") and input.y < -0.3:
 		speed = SPRINT_SPEED
 	var hv := Vector3(velocity.x, 0, velocity.z)
+	if _fling_left > 0.0:
+		# Kurz nach der Ankunft: bleibt man an einer Kante hängen, trägt der Wurf darüber
+		_fling_left = 0.0 if is_on_floor() else _fling_left - delta
+		var along := hv.dot(_grapple_dir)
+		if along < _fling_speed and not is_on_floor():
+			hv += _grapple_dir * (_fling_speed - along)
 	if is_on_floor():
-		hv = hv.move_toward(dir * speed, 32.0 * delta)
-	elif dir.length() > 0.1 and hv.length() <= speed + 0.5:
-		hv = hv.move_toward(dir * speed, 9.0 * delta)
-	elif dir.length() > 0.1:
-		# Schwung vom Haken behalten, nur leicht lenken
-		hv += dir * 6.0 * delta
+		# Mit viel Schwung gelandet: ausrutschen statt sofort stehen
+		var grip := 32.0 if hv.length() < SPRINT_SPEED + 1.0 else 13.0
+		hv = hv.move_toward(dir * speed, grip * delta)
+	elif hv.length() <= speed + 0.5:
+		if dir.length() > 0.1:
+			hv = hv.move_toward(dir * speed, 9.0 * delta)
+	else:
+		# Schwung behalten: Lenken dreht die Flugrichtung, macht aber nicht schneller
+		var carried := hv.length()
+		hv = (hv + dir * 11.0 * delta).limit_length(carried)
+		hv *= 1.0 - 0.1 * delta
 	velocity.x = hv.x
 	velocity.z = hv.z
 
 	if is_on_floor():
 		if not blocked and Input.is_action_just_pressed("jump"):
 			velocity.y = JUMP_VELOCITY
+			Sfx.play("jump", 0.0, 1.0, 0.08)
 	else:
 		velocity.y -= GRAVITY * delta
+		if not blocked and Input.is_action_just_pressed("jump"):
+			_gas_burst(dir)
 	move_and_slide()
 
 	if not blocked and Input.is_action_just_pressed("grapple"):
 		_try_grapple()
+
+
+## Gasstoß: kurzer Schub in Eingaberichtung (oder Blickrichtung), nur in der Luft.
+func _gas_burst(input_dir: Vector3) -> void:
+	if gas < 1.0 or dead:
+		return
+	gas -= 1.0
+	var d := -_cam.global_transform.basis.z
+	if input_dir.length() > 0.1:
+		d = (input_dir.normalized() + Vector3(0, 0.25, 0)).normalized()
+	if velocity.y < 0.0:
+		velocity.y *= 0.35
+	velocity = (velocity + d * GAS_IMPULSE + Vector3(0, 2.5, 0)).limit_length(MAX_SPEED)
+	_shake = minf(_shake + 0.12, 0.6)
+	Sfx.play("gas", 0.0, 1.0, 0.06)
+	Fx.gas_puff(get_tree().current_scene, global_position + Vector3(0, 0.95, 0), -d)
+
+
+func _update_motion_audio() -> void:
+	var speed := velocity.length()
+	var airborne := not is_on_floor()
+	var wind := clampf((speed - 7.0) / 22.0, 0.0, 1.0) if airborne or speed > 9.0 else 0.0
+	Sfx.loop("wind_loop", wind, 0.75 + speed / 50.0)
+	var reel := clampf(_reel_rate / REEL_SPEED, 0.0, 1.0)
+	Sfx.loop("reel_loop", 0.45 + reel * 0.55 if grappling else 0.0, 0.7 + reel * 0.7)
+	if not airborne and not _was_on_floor and _fall_speed > 4.0:
+		Sfx.play("land", clampf((_fall_speed - 12.0) * 0.5, -8.0, 4.0), 1.0, 0.08)
+		_shake = minf(_shake + clampf(_fall_speed / 60.0, 0.0, 0.35), 0.6)
+	_was_on_floor = not airborne
+	_fall_speed = -velocity.y if airborne else 0.0
 
 
 # --- Enterhaken ---------------------------------------------------------
@@ -421,7 +497,7 @@ func _find_grapple_target() -> Dictionary:
 	if point.distance_to(aim_point()) < 3.0:
 		return {}
 	if normal.y > 0.6:
-		point += Vector3(0, 1.1, 0)                       # Boden: darauf landen
+		point += Vector3(0, 1.6, 0)                       # Boden: darauf landen
 	elif normal.y < -0.6:
 		point += Vector3(0, -1.0, 0)                      # Decke: darunter hängen
 	else:
@@ -430,7 +506,7 @@ func _find_grapple_target() -> Dictionary:
 		var q2 := PhysicsRayQueryParameters3D.create(top, top + Vector3(0, -3.4, 0), Game.LAYER_WORLD)
 		var ledge := space.intersect_ray(q2)
 		if not ledge.is_empty() and ledge.normal.y > 0.7 and ledge.position.y < top.y - 0.3:
-			point = ledge.position + Vector3(0, 1.2, 0)
+			point = ledge.position + Vector3(0, 2.0, 0)
 		else:
 			point += normal * 0.6
 	return {"point": point, "anchor": hit.position}
@@ -441,7 +517,7 @@ func _probe_grapple() -> void:
 
 
 func _try_grapple() -> void:
-	if grapple_cd > 0.0 or grappling:
+	if grapple_cd > 0.0 or grappling or dead:
 		return
 	var target := _find_grapple_target()
 	if target.is_empty():
@@ -450,38 +526,112 @@ func _try_grapple() -> void:
 	aiming = false
 	_grapple_point = target["point"]
 	_grapple_time = 0.0
+	_fling_left = 0.0
+	_rope_len = _grapple_point.distance_to(aim_point())
+	_reel_rate = 0.0
+	var flat := _grapple_point - aim_point()
+	flat.y = 0.0
+	_grapple_dir = flat.normalized() if flat.length() > 1.5 else Basis(Vector3.UP, _yaw) * Vector3.FORWARD
 	_hook.global_position = target["anchor"]
 	_hook.visible = true
 	_cable.visible = true
+	# Ruck beim Einhaken: sofort Zug auf dem Seil, Füße vom Boden
+	velocity += (_grapple_point - aim_point()).normalized() * 5.0
+	if is_on_floor():
+		velocity.y = maxf(velocity.y, 3.0)
 	Fx.impact(get_tree().current_scene, target["anchor"], Vector3.UP, ENTITY)
+	Sfx.play("hook_fire", 0.0, 1.0, 0.06)
+	Sfx.play_at("hook_hit", target["anchor"], 0.0, 1.0, 0.08)
 	_shake = minf(_shake + 0.15, 0.6)
 
 
+## Am Seil: Die Winde regelt nur die Geschwindigkeit in Seilrichtung. Alles
+## quer dazu (Schwerkraft, Lenken, mitgebrachter Schwung) bleibt frei. Daraus
+## wird ein Bogen statt einer Geraden.
+##   nichts drücken   einholen und dabei schwingen
+##   S halten         Seil halten: reines Pendel
+##   A / D / W        in den Schwung lenken
+##   Leertaste        abspringen, Schwung mitnehmen
+##   Q                loslassen
 func _grapple_move(delta: float, blocked: bool) -> void:
 	_grapple_time += delta
 	var to := _grapple_point - aim_point()
 	var dist := to.length()
-	var jumped := not blocked and Input.is_action_just_pressed("jump")
-	var cancelled := not blocked and Input.is_action_just_pressed("grapple") and _grapple_time > 0.15
-	if dist < 1.6 or jumped or cancelled or _grapple_time > 4.0:
-		_end_grapple(jumped, dist < 1.6)
+	var dir := to / maxf(dist, 0.001)
+	if not blocked and Input.is_action_just_pressed("jump"):
+		_end_grapple("jump")
 		return
-	velocity = velocity.move_toward(to / dist * GRAPPLE_SPEED, 90.0 * delta)
+	if not blocked and Input.is_action_just_pressed("grapple") and _grapple_time > 0.15:
+		_end_grapple("drop")
+		return
+	if dist < 1.7:
+		_end_grapple("arrive")
+		return
+
+	var input := Vector2.ZERO
+	if not blocked:
+		input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var hold := input.y > 0.5
+	velocity.y -= GRAVITY * delta
+	velocity += Basis(Vector3.UP, _yaw) * Vector3(input.x, 0, minf(input.y, 0.0)) * SWING_STEER * delta
+
+	var closing := velocity.dot(dir)
+	var regulated := closing
+	if dist >= _rope_len - 0.05:
+		regulated = maxf(regulated, 0.0)                 # straffes Seil gibt nicht nach
+	if not hold:
+		var want := minf(REEL_SPEED, 7.0 + dist * 1.4)   # kurz vor dem Anker abbremsen
+		regulated = move_toward(regulated, want, REEL_ACCEL * delta)
+		_rope_len = minf(_rope_len, dist)
+	velocity += dir * (regulated - closing)
+	# Anflughilfe: Wer nicht selbst lenkt, kreist nicht um den Anker, sondern
+	# wird hingezogen. Mit A/D/W oder S bleibt der volle Schwung erhalten.
+	if input == Vector2.ZERO:
+		var near := clampf(1.0 - (dist - 2.0) / 8.0, 0.0, 1.0)
+		var tangent := velocity - dir * velocity.dot(dir)
+		velocity -= tangent * (1.0 - exp(-near * 9.0 * delta))
+	velocity = velocity.limit_length(MAX_SPEED)
+	_reel_rate = maxf(regulated, 0.0)
 	move_and_slide()
-	if _grapple_time > 0.3 and get_real_velocity().length() < 2.0:
-		_end_grapple(false, true)
+
+	# Seil als Zwangsbedingung: weiter als die Seillänge geht es nicht
+	var to2 := _grapple_point - aim_point()
+	var d2 := to2.length()
+	if d2 > _rope_len:
+		var n := to2 / d2
+		move_and_collide(n * (d2 - _rope_len))
+		var outward := velocity.dot(n)
+		if outward < 0.0:
+			velocity -= n * outward
+	if not hold and _grapple_time > 0.5 and get_real_velocity().length() < 0.8:
+		_end_grapple("arrive")                           # hängt irgendwo fest
 
 
-func _end_grapple(jumped: bool, arrived: bool) -> void:
+func _end_grapple(how: String) -> void:
 	grappling = false
 	grapple_cd = Game.grapple_cooldown()
+	_reel_rate = 0.0
 	_hook.visible = false
 	_cable.visible = false
-	if jumped:
-		velocity.y = maxf(velocity.y, 0.0) * 0.6 + 6.5
-	elif arrived:
-		velocity *= 0.45
-		velocity.y = maxf(velocity.y, 3.5)
+	match how:
+		"jump":
+			# Abspringen: Schwung behalten, dazu ein Stoß nach oben und in Flugrichtung
+			var hv := Vector3(velocity.x, 0, velocity.z)
+			if hv.length() > 1.0:
+				velocity += hv.normalized() * 2.5
+			velocity.y = maxf(velocity.y, 0.0) + 5.5
+			Fx.gas_puff(get_tree().current_scene, global_position + Vector3(0, 0.95, 0), Vector3.DOWN)
+			Sfx.play("gas", -6.0, 1.25, 0.06)
+		"arrive":
+			# Nicht abbremsen: mit Schwung über den Anker hinaus
+			var along := maxf(Vector3(velocity.x, 0, velocity.z).dot(_grapple_dir), ARRIVE_FLING)
+			velocity = _grapple_dir * along + Vector3(0, maxf(velocity.y, ARRIVE_LIFT), 0)
+			_fling_left = 0.45
+			_fling_speed = along
+			Sfx.play("whoosh", -2.0, 1.1, 0.1)
+	velocity = velocity.limit_length(MAX_SPEED)
+	if how != "arrive" and velocity.length() > 12.0:
+		Sfx.play("whoosh", 0.0, 1.0, 0.1)
 
 
 func _update_cable() -> void:
@@ -500,7 +650,7 @@ func _update_cable() -> void:
 # --- Waffe & Klaue ------------------------------------------------------
 
 func _try_fire() -> void:
-	if _fire_cd > 0.0 or overheated or grappling:
+	if _fire_cd > 0.0 or overheated or dead:
 		return
 	_fire_cd = FIRE_INTERVAL
 	_since_fire = 0.0
@@ -540,7 +690,9 @@ func _try_fire() -> void:
 			Fx.impact(scene, end, hit2.normal, Color(1.0, 0.3, 0.15))
 		else:
 			Fx.impact(scene, end, hit2.normal, Color(1.0, 0.75, 0.4))
+			Sfx.play_at("impact", end, 0.0, 1.0, 0.15)
 	Fx.tracer(scene, from, end, Color(1.0, 0.8, 0.5))
+	Sfx.play("shot", 0.0, 1.0 + heat * 0.12, 0.04)
 
 	_muzzle_light.light_energy = 5.0
 	_pitch = minf(_pitch + 0.012, 1.1)
@@ -558,10 +710,11 @@ func _update_heat(delta: float) -> void:
 
 
 func _try_melee() -> void:
-	if _since_melee < MELEE_COOLDOWN or grappling:
+	if _since_melee < MELEE_COOLDOWN or grappling or dead:
 		return
 	_since_melee = 0.0
 	_melee_hit_done = false
+	Sfx.play("whoosh", 0.0, 1.25, 0.08)
 	if is_on_floor():
 		var fwd := Basis(Vector3.UP, _yaw) * Vector3.FORWARD
 		velocity += fwd * 5.0
@@ -591,6 +744,7 @@ func _update_melee() -> void:
 		any = true
 	if any:
 		_shake = minf(_shake + 0.3, 0.6)
+		Sfx.play("claw_hit", 0.0, 1.0, 0.08)
 
 
 # --- Figur --------------------------------------------------------------
@@ -600,13 +754,22 @@ func _update_model(delta: float) -> void:
 	var face_cam := aiming or _since_fire < 0.8 or _since_melee < 0.5
 	var target_yaw := _model.rotation.y
 	if grappling:
+		# Am Seil: Blick in Flugrichtung, im Stand zum Anker
 		var to := _grapple_point - global_position
-		target_yaw = atan2(-to.x, -to.z)
+		var face := Vector3(velocity.x, 0, velocity.z)
+		if face.length() < 4.0:
+			face = Vector3(to.x, 0, to.z)
+		target_yaw = atan2(-face.x, -face.z)
 	elif face_cam:
 		target_yaw = _yaw
 	elif speed > 0.3:
 		target_yaw = atan2(-velocity.x, -velocity.z)
 	_model.rotation.y = lerp_angle(_model.rotation.y, target_yaw, 1.0 - exp(-delta * 12.0))
+	# In der Luft legt sich die Figur in die Flugrichtung
+	var lean := 0.0
+	if not is_on_floor() and not face_cam:
+		lean = -clampf((velocity.length() - 6.0) / 24.0, 0.0, 1.0) * 0.75
+	_model.rotation.x = lerpf(_model.rotation.x, lean, 1.0 - exp(-delta * 8.0))
 
 	var k := 1.0 - exp(-delta * 14.0)
 	var swing := 0.0
@@ -614,6 +777,10 @@ func _update_model(delta: float) -> void:
 		swing = 0.5
 	elif is_on_floor() and speed > 0.3:
 		_walk_phase += delta * (5.0 + speed * 1.3)
+		var step := int(_walk_phase / PI)
+		if step != _step_index:
+			_step_index = step
+			Sfx.play("step1" if step % 2 == 0 else "step2", clampf(speed - 6.0, -4.0, 2.0), 1.0, 0.1)
 		swing = sin(_walk_phase) * clampf(speed / SPRINT_SPEED, 0.25, 1.0) * 0.85
 	elif not is_on_floor():
 		swing = 0.35
@@ -629,9 +796,11 @@ func _update_model(delta: float) -> void:
 	# Links: der Arm. Hängt schwer, greift zum Haken, schlägt als Klaue.
 	var arm_target := -swing * 0.45 + 0.05
 	var arm_side := 0.0
+	var arm_yaw := 0.0
 	if grappling:
-		var to := _hook.global_position - _arm_l.global_position
-		arm_target = PI * 0.5 + atan2(to.y, Vector2(to.x, to.z).length())
+		var local: Vector3 = _model.global_transform.basis.inverse() * (_hook.global_position - _arm_l.global_position)
+		arm_target = PI * 0.5 + atan2(local.y, Vector2(local.x, local.z).length())
+		arm_yaw = atan2(-local.x, -local.z)
 	elif _since_melee < 0.45:
 		var t := _since_melee / 0.45
 		arm_target = lerpf(2.7, 0.6, t) if t > 0.25 else lerpf(0.2, 2.7, t / 0.25)
@@ -639,6 +808,7 @@ func _update_model(delta: float) -> void:
 		k = 1.0
 	_arm_l.rotation.x = lerpf(_arm_l.rotation.x, arm_target, k)
 	_arm_l.rotation.z = lerpf(_arm_l.rotation.z, arm_side, k)
+	_arm_l.rotation.y = lerp_angle(_arm_l.rotation.y, arm_yaw, k)
 	_model.position.y = absf(sin(_walk_phase)) * 0.04 if swing != 0.0 and is_on_floor() else 0.0
 
 
@@ -666,13 +836,18 @@ func _die() -> void:
 		return
 	dead = true
 	if grappling:
-		_end_grapple(false, false)
+		_end_grapple("drop")
+	Sfx.play("death")
+	Sfx.stop_loops()
 	health = 0.0
 	health_changed.emit(health, Game.max_health())
 	died.emit()
 	await get_tree().create_timer(1.6).timeout
+	if grappling:
+		_end_grapple("drop")
 	global_position = _checkpoint
 	velocity = Vector3.ZERO
+	gas = GAS_CHARGES
 	set_look(_checkpoint_yaw, -0.08)
 	health = Game.max_health()
 	heat = 0.0
