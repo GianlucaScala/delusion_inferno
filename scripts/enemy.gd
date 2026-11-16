@@ -16,6 +16,7 @@ var health := 60.0
 var dead := false
 var alerted := false
 var xp_reward := 35
+var scrap_reward := 8
 var body_radius := 0.55
 
 var _fire_t := 1.5
@@ -108,6 +109,9 @@ func take_damage(amount: float, pos := Vector3.ZERO, dir := Vector3.ZERO) -> voi
 	if health <= 0.0:
 		dead = true
 		Game.add_xp(xp_reward)
+		if scrap_reward > 0:
+			Game.add_scrap(scrap_reward)
+			Fx.float_text(get_tree().current_scene, global_position + Vector3(0, 2.6, 0), "+%d Schrott" % scrap_reward, Color(1.0, 0.72, 0.38))
 		Sfx.play_at("enemy_die", global_position + Vector3(0, 1.7, 0), 0.0, 1.0, 0.1)
 		Fx.debris(get_tree().current_scene, global_position + Vector3(0, 1.6, 0), _shell_mat.duplicate(), 9)
 		Fx.impact(get_tree().current_scene, global_position + Vector3(0, 1.7, 0), Vector3.UP, Color(1.0, 0.4, 0.15))

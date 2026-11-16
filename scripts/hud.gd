@@ -16,6 +16,7 @@ class Reticle extends Control:
 	var grapple := false
 	var grapple_cd := 0.0
 	var gas := 2.0
+	var gas_max := 2
 
 	func _draw() -> void:
 		var c := size * 0.5
@@ -32,9 +33,9 @@ class Reticle extends Control:
 		elif grapple_cd > 0.0:
 			draw_arc(c, 22.0, -PI * 0.5, -PI * 0.5 + TAU * clampf(grapple_cd, 0.0, 1.0), 24, Color(0.72, 0.38, 1.0, 0.45), 1.5)
 		# Gasladungen: zwei kurze Striche unter dem Fadenkreuz
-		for i in 2:
+		for i in gas_max:
 			var fill := clampf(gas - i, 0.0, 1.0)
-			var x := c.x - 11.0 + i * 12.0
+			var x := c.x - gas_max * 6.0 + 1.0 + i * 12.0
 			draw_rect(Rect2(x, c.y + 30.0, 10.0, 3.0), Color(0, 0, 0, 0.45))
 			draw_rect(Rect2(x, c.y + 30.0, 10.0 * fill, 3.0), Color(0.86, 0.9, 0.92, 0.85 if fill >= 1.0 else 0.4))
 		if hit > 0.0:
@@ -70,6 +71,11 @@ var _menu_points: Label
 var _menu_buttons := {}
 var _end_title: Label
 var _end_body: Label
+var _talk_panel: PanelContainer
+var _talk_who: Label
+var _talk_text: Label
+var _talk_choices: VBoxContainer
+var _talk_hint: Label
 
 
 func _ready() -> void:
@@ -88,6 +94,10 @@ func _ready() -> void:
 	Game.stats_changed.connect(_refresh_xp)
 	Game.boss_started.connect(_on_boss_started)
 	Game.boss_ended.connect(_on_boss_ended)
+	Game.scrap_changed.connect(_refresh_xp)
+	Game.layer_changing.connect(_on_layer_changing)
+	Game.dialogue_changed.connect(_on_dialogue)
+	Game.dialogue_ended.connect(_on_dialogue_ended)
 	_refresh_xp()
 	if Game.objective != "":
 		_on_objective(Game.objective)
@@ -111,6 +121,7 @@ func _process(delta: float) -> void:
 		_reticle.aiming = _player.aiming
 		_reticle.grapple = _player.grapple_ready
 		_reticle.gas = _player.gas
+		_reticle.gas_max = int(Game.gas_charges())
 		_reticle.grapple_cd = _player.grapple_cd / maxf(Game.grapple_cooldown(), 0.01)
 		_reticle.spread = lerpf(_reticle.spread, _player.heat, 1.0 - exp(-delta * 10.0))
 		_reticle.visible = not _player.dead and not Game.busy()
@@ -121,6 +132,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("upgrade"):
 		_toggle_menu()
 		get_viewport().set_input_as_handled()
+	elif Game.talking:
+		if event is InputEventKey and event.pressed and not event.echo:
+			var pick: int = event.physical_keycode - KEY_1
+			if pick >= 0 and pick < _talk_choices.get_child_count():
+				Game.talk_choose(pick)
+				get_viewport().set_input_as_handled()
 	elif Game.menu_open:
 		if event.is_action_pressed("pause"):
 			_toggle_menu()
@@ -330,6 +347,7 @@ func _build() -> void:
 	vb.add_child(hint)
 
 	_build_menu(root)
+	_build_talk(root)
 
 	# Endkarte
 	var end_box := _centered_box()
@@ -342,6 +360,74 @@ func _build() -> void:
 	_end_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_end_body.modulate.a = 0.0
 	end_box.add_child(_end_body)
+
+
+func _build_talk(root: Control) -> void:
+	_talk_panel = PanelContainer.new()
+	_talk_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_talk_panel.anchor_left = 0.2
+	_talk_panel.anchor_right = 0.8
+	_talk_panel.anchor_top = 0.58
+	_talk_panel.anchor_bottom = 0.93
+	var style := _panel_style(Color(1.0, 0.62, 0.28, 0.55))
+	style.set_content_margin_all(26)
+	_talk_panel.add_theme_stylebox_override("panel", style)
+	_talk_panel.visible = false
+	root.add_child(_talk_panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	_talk_panel.add_child(vb)
+	_talk_who = _label("", 16, AMBER)
+	vb.add_child(_talk_who)
+	_talk_text = _label("", 22)
+	_talk_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_talk_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vb.add_child(_talk_text)
+	_talk_choices = VBoxContainer.new()
+	_talk_choices.add_theme_constant_override("separation", 4)
+	vb.add_child(_talk_choices)
+	_talk_hint = _label("[E]  weiter", 14, AMBER)
+	_talk_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	vb.add_child(_talk_hint)
+
+
+func _on_dialogue(speaker: String, text: String, choices: Array) -> void:
+	_talk_who.text = speaker
+	_talk_who.visible = speaker != ""
+	_talk_text.text = text
+	for child in _talk_choices.get_children():
+		_talk_choices.remove_child(child)
+		child.queue_free()
+	for i in choices.size():
+		var button := Button.new()
+		button.text = "  [%d]   %s" % [i + 1, choices[i]]
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.focus_mode = Control.FOCUS_NONE
+		button.add_theme_font_size_override("font_size", 19)
+		button.pressed.connect(Game.talk_choose.bind(i))
+		_talk_choices.add_child(button)
+	_talk_hint.visible = choices.is_empty()
+	_talk_panel.visible = true
+	_prompt.visible = false
+	_subtitle.visible = false
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if not choices.is_empty() else Input.MOUSE_MODE_CAPTURED
+	Sfx.play("radio", -4.0, 1.3, 0.1)
+
+
+func _on_dialogue_ended() -> void:
+	_talk_panel.visible = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Sfx.play("ui_close")
+
+
+func _on_layer_changing(title: String, sub: String) -> void:
+	_end_title.text = title
+	_end_body.text = sub
+	_fade.color = Color(0, 0, 0, _fade.color.a)
+	var tw := create_tween()
+	tw.tween_property(_fade, "color:a", 1.0, 1.4)
+	tw.tween_property(_end_title, "modulate:a", 1.0, 0.8)
+	tw.parallel().tween_property(_end_body, "modulate:a", 1.0, 0.8)
 
 
 func _build_menu(root: Control) -> void:
@@ -431,7 +517,7 @@ func _on_heat(value: float, overheated: bool) -> void:
 
 func _refresh_xp() -> void:
 	_xp_fill.size.x = BAR_W * clampf(float(Game.xp) / Game.xp_needed(), 0.0, 1.0)
-	var text := "STUFE %d" % Game.level
+	var text := "STUFE %d   ·   SCHROTT %d" % [Game.level, Game.scrap]
 	if Game.skill_points > 0:
 		text += "   ·   %d Punkt%s frei  [Tab]" % [Game.skill_points, "" if Game.skill_points == 1 else "e"]
 	_level_label.text = text

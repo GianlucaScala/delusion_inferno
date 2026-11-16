@@ -27,7 +27,6 @@ const REEL_SPEED := 21.0        # so schnell holt die Winde das Seil ein (m/s)
 const REEL_ACCEL := 46.0
 const SWING_STEER := 15.0       # Lenken, solange man am Seil hängt
 const GAS_IMPULSE := 9.5        # Gasstoß in der Luft
-const GAS_CHARGES := 2.0
 const GAS_RECHARGE := 2.4       # Sekunden pro Ladung (am Boden sofort voll)
 const MAX_SPEED := 32.0
 const ARRIVE_FLING := 11.0      # so schnell wirft einen der Haken über den Anker hinaus
@@ -43,7 +42,7 @@ var dead := false
 var grappling := false
 var grapple_ready := false      # Fadenkreuz liegt auf etwas in Reichweite
 var grapple_cd := 0.0
-var gas := GAS_CHARGES          # Ladungen für den Gasstoß
+var gas := 2.0                  # Ladungen für den Gasstoß
 
 var _yaw := 0.0
 var _pitch := -0.08
@@ -324,7 +323,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("interact"):
 		if Game.reading:
 			Game.close_log()
-		elif _focus and not dead:
+		elif Game.talking:
+			Game.talk_advance()
+		elif _focus and not dead and not Game.busy():
 			_focus.interact(self)
 
 
@@ -389,9 +390,9 @@ func _physics_process(delta: float) -> void:
 
 	# Gas lädt nach: am Boden sofort, in der Luft langsam
 	if is_on_floor():
-		gas = GAS_CHARGES
+		gas = Game.gas_charges()
 	else:
-		gas = minf(gas + delta / GAS_RECHARGE, GAS_CHARGES)
+		gas = minf(gas + delta / GAS_RECHARGE, Game.gas_charges())
 	_update_motion_audio()
 
 	if _since_damage > 5.0 and health < Game.max_health():
@@ -703,7 +704,7 @@ func _update_heat(delta: float) -> void:
 	if heat <= 0.0:
 		return
 	if _since_fire > 0.45 or overheated:
-		heat = maxf(heat - (0.55 if overheated else 0.4) * delta, 0.0)
+		heat = maxf(heat - (0.55 if overheated else 0.4) * Game.cool_mult() * delta, 0.0)
 		if heat <= 0.0:
 			overheated = false
 		heat_changed.emit(heat, overheated)
@@ -823,7 +824,7 @@ func _update_focus() -> void:
 			best_d = d
 			best = node
 	_focus = best
-	var text: String = best.prompt if best and not Game.reading else ""
+	var text: String = best.prompt if best and not Game.busy() else ""
 	if text != _prompt:
 		_prompt = text
 		prompt_changed.emit(text)
@@ -847,7 +848,7 @@ func _die() -> void:
 		_end_grapple("drop")
 	global_position = _checkpoint
 	velocity = Vector3.ZERO
-	gas = GAS_CHARGES
+	gas = Game.gas_charges()
 	set_look(_checkpoint_yaw, -0.08)
 	health = Game.max_health()
 	heat = 0.0

@@ -1,38 +1,24 @@
-extends Node3D
+extends "res://scripts/level_base.gd"
 ## LAYER I: eine Schlucht zwischen zwei Wandflächen des Inferno.
 ## Spielweg: Aufschlagsims -> Brücke -> Knoten (Terminal) -> abgerissene Rampe
 ## (Enterhaken) -> Verteilerdeck (Kampf) -> gebrochene Brücke (Enterhaken)
 ## -> Vorplatz mit dem Pförtner (Boss) -> Tor -> Schacht nach Layer II.
 
-const Builder := preload("res://scripts/megastructure.gd")
-const Enemy := preload("res://scripts/enemy.gd")
 const Boss := preload("res://scripts/boss.gd")
-const Interactable := preload("res://scripts/interactable.gd")
-const Fx := preload("res://scripts/fx.gd")
 
-const WARM := Color(1.0, 0.55, 0.22)
-const COLD := Color(0.6, 0.85, 1.0)
-const ENTITY := Color(0.62, 0.18, 1.0)
 const WALL_NEAR_Z := 10.0      # Wandfläche hinter dem Start
 const WALL_FAR_Z := -150.0     # Wandfläche mit dem Tor
 
-var spawn_point := Vector3(0, 0.1, 7.0)
-var spawn_yaw := 0.0
-
-var b: Builder
-var _rng := RandomNumberGenerator.new()
 var _arena_alive := 0
 var _door: AnimatableBody3D
 var _gate_switch: Interactable
 var _boss: Node3D
-var _fired := {}
 
 
 func _ready() -> void:
-	_rng.seed = 412
-	b = Builder.new()
-	b.name = "Structure"
-	add_child(b)
+	layer_id = 1
+	spawn_point = Vector3(0, 0.1, 7.0)
+	_make_builder(412)
 	_build_start()
 	_build_bridge_one()
 	_build_node_platform()
@@ -41,62 +27,6 @@ func _ready() -> void:
 	_build_megastructure()
 	b.commit()
 	_build_story()
-
-
-# --- Bausteine ----------------------------------------------------------
-
-func _bridge_z(x: float, y: float, z0: float, z1: float, width: float, gaps: Array = []) -> void:
-	var hw := width * 0.5
-	b.span(Vector3(x - hw, y - 0.8, z0), Vector3(x + hw, y, z1))
-	b.span(Vector3(x - 0.5, y - 2.6, z0), Vector3(x + 0.5, y - 0.8, z1), "concrete_dark", false)
-	var lo := minf(z0, z1)
-	var hi := maxf(z0, z1)
-	var z := lo + 1.0
-	while z < hi - 2.5:
-		for side in [-1.0, 1.0]:
-			var broken := false
-			for gap in gaps:
-				if side == gap[0] and z > gap[1] and z < gap[2]:
-					broken = true
-			if broken:
-				continue
-			var rx: float = x + side * (hw - 0.08)
-			b.box(Vector3(rx, y + 0.55, z), Vector3(0.1, 1.1, 0.1), "metal", false)
-			b.box(Vector3(rx, y + 1.1, z + 1.5), Vector3(0.08, 0.08, 3.0), "metal", false)
-			b.box(Vector3(rx, y + 0.6, z + 1.5), Vector3(0.05, 0.05, 3.0), "metal", false)
-			b.collider(Vector3(rx, y + 0.6, z + 1.5), Vector3(0.12, 1.2, 3.0))
-		z += 3.0
-
-
-func _lamp_post(pos: Vector3, height: float, color: Color, kind: String, energy := 2.2) -> void:
-	b.box(pos + Vector3(0, height * 0.5, 0), Vector3(0.14, height, 0.14), "metal", false)
-	b.box(pos + Vector3(0, height, 0), Vector3(0.5, 0.12, 0.5), "metal", false)
-	b.box(pos + Vector3(0, height - 0.12, 0), Vector3(0.36, 0.1, 0.36), kind, false)
-	b.lamp(pos + Vector3(0, height - 0.5, 0), color, energy, 17.0)
-
-
-func _crate(pos: Vector3, size := 1.2, kind := "rust") -> void:
-	b.box(pos + Vector3(0, size * 0.5, 0), Vector3.ONE * size, kind)
-
-
-## Violett glimmender Knoten: Hinweis "hier greift der Haken gut".
-func _anchor(pos: Vector3) -> void:
-	b.box(pos, Vector3(0.7, 0.3, 0.7), "flesh", false)
-	b.box(pos + Vector3(0, -0.2, 0), Vector3(0.36, 0.14, 0.36), "light_entity", false)
-	b.lamp(pos + Vector3(0, -0.8, 0), ENTITY, 1.6, 9.0)
-
-
-func _terminal(pos: Vector3, yaw: float) -> Interactable:
-	var node := Interactable.new()
-	node.position = pos
-	node.rotation.y = yaw
-	add_child(node)
-	var rot := Basis(Vector3.UP, yaw)
-	b.box(pos + Vector3(0, 0.6, 0), Vector3(1.0, 1.2, 0.5), "metal", true, rot)
-	b.box(pos + rot * Vector3(0, 1.45, 0.05), Vector3(0.9, 0.6, 0.12), "metal", false, rot * Basis(Vector3.RIGHT, -0.35))
-	b.box(pos + rot * Vector3(0, 1.45, 0.12), Vector3(0.74, 0.44, 0.04), "light_cold", false, rot * Basis(Vector3.RIGHT, -0.35))
-	b.lamp(pos + rot * Vector3(0, 1.6, 0.9), COLD, 1.2, 6.0)
-	return node
 
 
 func _spawn_enemy(pos: Vector3, arena: bool) -> void:
@@ -230,8 +160,9 @@ func _build_arena() -> void:
 	_lamp_post(Vector3(70, 8, -88), 6.0, WARM, "light_warm", 2.6)
 	_lamp_post(Vector3(38, 8, -88), 6.0, COLD, "light_cold", 1.8)
 
-	for p in [Vector3(60, 8.2, -70), Vector3(65, 8.2, -84), Vector3(50, 8.2, -85)]:
-		_spawn_enemy(p, true)
+	if not Game.has_flag("l1_arena_clear"):
+		for p in [Vector3(60, 8.2, -70), Vector3(65, 8.2, -84), Vector3(50, 8.2, -85)]:
+			_spawn_enemy(p, true)
 
 	# Brücke zum Vorplatz: in der Mitte zehn Meter weggebrochen
 	_bridge_z(54, 8, -90, -100, 4.0)
@@ -310,15 +241,18 @@ func _build_gate() -> void:
 	_gate_switch = _terminal(Vector3(60.5, 8, -148.6), 0.0)
 	_gate_switch.prompt = "[E]  Tor öffnen"
 	_gate_switch.one_shot = true
-	_gate_switch.enabled = false
+	_gate_switch.enabled = Game.has_flag("l1_boss_dead") and not Game.has_flag("l1_gate_open")
 	_gate_switch.on_use = _open_gate
+	if Game.has_flag("l1_gate_open"):
+		_door.position.y = 20.4
 
-	_boss = Boss.new()
-	_boss.position = Vector3(54, 8.2, -141)
-	add_child(_boss)
-	_boss.died.connect(_on_boss_died)
-	_boss.phase_two.connect(func() -> void:
-		Game.say("FISHER", "Jetzt ist er wach. Vorher hat er nur gearbeitet."))
+	if not Game.has_flag("l1_boss_dead"):
+		_boss = Boss.new()
+		_boss.position = Vector3(54, 8.2, -141)
+		add_child(_boss)
+		_boss.died.connect(_on_boss_died)
+		_boss.phase_two.connect(func() -> void:
+			Game.say("FISHER", "Jetzt ist er wach. Vorher hat er nur gearbeitet."))
 
 
 # --- Kulisse ------------------------------------------------------------
@@ -460,29 +394,6 @@ func _build_megastructure() -> void:
 
 # --- Geschichte ---------------------------------------------------------
 
-func _trigger(id: String, center: Vector3, size: Vector3, action: Callable) -> void:
-	var area := Area3D.new()
-	area.collision_layer = 0
-	area.collision_mask = Game.LAYER_PLAYER
-	area.position = center
-	var shape := BoxShape3D.new()
-	shape.size = size
-	var cs := CollisionShape3D.new()
-	cs.shape = shape
-	area.add_child(cs)
-	add_child(area)
-	area.body_entered.connect(func(_body: Node) -> void:
-		if _fired.has(id):
-			return
-		_fired[id] = true
-		action.call())
-
-
-func _checkpoint(pos: Vector3, yaw: float) -> void:
-	if Game.player:
-		Game.player.set_checkpoint(pos, yaw)
-
-
 func _build_story() -> void:
 	_trigger("bridge_mid", Vector3(0, 2, -28), Vector3(6, 5, 4), func() -> void:
 		Game.say("FISHER", "Nach oben kommt hier keiner mehr. Nach unten kommt jeder.")
@@ -508,17 +419,22 @@ func _build_story() -> void:
 		Game.say("FISHER", "Wieder ein Loch. Du weißt, was zu tun ist."))
 	_trigger("boss", Vector3(54, 18, -126), Vector3(40, 20, 14), func() -> void:
 		_checkpoint(Vector3(54, 8.1, -114), 0.0)
-		_boss.activate()
+		if _boss:
+			_boss.activate()
 		Game.say("FISHER", "Der Pförtner. Die CSRU hat ihn gefüttert, bis er die Tür nicht mehr vergessen konnte.")
 		Game.say("FISHER", "Wenn er sich aufrichtet, schlägt er Wellen. Dann solltest du nicht auf dem Boden stehen.")
 		Game.set_objective("Überlebe den Pförtner"))
 	_trigger("ending", Vector3(54, -14, -185), Vector3(6, 10, 30), func() -> void:
-		Game.end_game("LAYER II", "Fortsetzung folgt."))
+		Game.goto_layer(2, "LAYER II", "DIE HÄNGE"))
 
 
 func start_story() -> void:
 	Game.title_card.emit("iNFERNO;", "LAYER I   —   LIMBUS")
+	if Game.has_flag("l1_started"):
+		return                      # geladener Spielstand: Auftrag steht schon
+	Game.set_flag("l1_started")
 	Game.set_objective("Überquere die Brücke")
+	Game.checkpoint(spawn_point, spawn_yaw)
 	await get_tree().create_timer(3.0).timeout
 	Game.say("FISHER", "…he. Du da. Du atmest ja noch.")
 	Game.say("FISHER", "Die meisten, die ihr runterwerft, kommen in Stücken an. Du bist am Stück. Fast.")
@@ -536,9 +452,9 @@ func _read_terminal(_who: Node) -> void:
 		+ "Er öffnet für niemanden, der noch ganz Mensch ist.\n\n" \
 		+ "— G."
 	Game.open_log("CSRU  //  CYBERNETIC SCHIZOID REFORMATION UNIT  //  NOTIZ 12", body, func() -> void:
-		if Game.flags.has("log_read"):
+		if Game.has_flag("log_read"):
 			return
-		Game.flags["log_read"] = true
+		Game.set_flag("log_read")
 		Game.add_xp(40)
 		Game.say("FISHER", "CSRU. Meine alte Familie. Lies nicht zu viel davon, es bleibt hängen.")
 		Game.say("FISHER", "Im Osten war mal eine Rampe zum Verteilerdeck. Von dort geht es zum Tor.")
@@ -548,12 +464,14 @@ func _read_terminal(_who: Node) -> void:
 func _on_arena_enemy_died(_enemy: Node) -> void:
 	_arena_alive -= 1
 	if _arena_alive == 0:
+		Game.set_flag("l1_arena_clear")
 		Game.say("FISHER", "Still. So mag ich sie am liebsten.")
 		Game.set_objective("Erreiche das Tor nach Layer II")
 
 
 func _on_boss_died(_boss_node: Node) -> void:
 	_gate_switch.enabled = true
+	Game.set_flag("l1_boss_dead")
 	Game.say("FISHER", "…du hast ihn wirklich abgeschaltet. Das hat seit Jahren keiner geschafft.")
 	Game.say("FISHER", "Das Pult rechts vom Tor. Mach auf.")
 	Game.set_objective("Öffne das Tor")
@@ -561,6 +479,8 @@ func _on_boss_died(_boss_node: Node) -> void:
 
 func _open_gate(_who: Node) -> void:
 	_gate_switch.prompt = ""
+	Game.set_flag("l1_gate_open")
+	Game.save()
 	var tw := create_tween()
 	tw.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	tw.tween_property(_door, "position:y", 20.4, 6.0)

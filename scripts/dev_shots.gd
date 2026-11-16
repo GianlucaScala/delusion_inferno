@@ -15,6 +15,16 @@ const VIEWS := [
 	["08_canyon", Vector3(70, 8.1, -56.0), -2.1, 0.1],
 ]
 
+const VIEWS_2 := [
+	["20_basin", Vector3(-3.5, 0.1, 5.0), -0.95, 0.12],
+	["21_hangs", Vector3(0, 0.1, -7.0), -0.25, 0.1],
+	["22_down", Vector3(7.5, 0.1, -7.5), -0.9, -0.85],
+	["23_naht_gate", Vector3(16, 0.1, -112.0), 0.0, 0.12],
+	["24_naht", Vector3(16, 0.1, -130.0), -0.35, 0.08],
+	["25_vesper", Vector3(22.5, 0.1, -143.5), -1.15, 0.0],
+	["26_mast", Vector3(16, 0.1, -214.0), 0.0, 0.5],
+]
+
 var mode := "shots"
 
 
@@ -39,7 +49,10 @@ func _run() -> void:
 			await _frames(240)
 			print("SMOKE OK  enemies=", get_tree().get_nodes_in_group("enemy").size(), " player=", player.global_position)
 		"test":
-			await _test(player)
+			if Game.layer == 2:
+				await _test_layer2(player)
+			else:
+				await _test(player)
 		_:
 			await _shots(player)
 	get_tree().quit()
@@ -52,7 +65,11 @@ func _shots(player: Node3D) -> void:
 	if hud.visible:
 		Game.set_objective("Überlebe den Pförtner")
 		Game.add_xp(60)
-	for view in VIEWS:
+	var views: Array = VIEWS_2 if Game.layer == 2 else VIEWS
+	for e in get_tree().get_nodes_in_group("enemy"):
+		if Game.layer == 2:
+			e.set_physics_process(false)
+	for view in views:
 		if "--only-swing" in OS.get_cmdline_user_args():
 			break
 		player.global_position = view[1]
@@ -65,6 +82,20 @@ func _shots(player: Node3D) -> void:
 		var img := get_viewport().get_texture().get_image()
 		img.save_png("res://shots/%s.png" % view[0])
 		print("shot ", view[0])
+	if Game.layer == 2:
+		# Gesprächsfenster mit Antworten
+		var vesper := _find_npc("vesper")
+		player.global_position = vesper.global_position + Vector3(-2.2, 0.1, 1.2)
+		_look_at(player, vesper.global_position + Vector3(0, 1.3, 0))
+		await _frames(8)
+		vesper.interact(player)
+		Game.talk_choose(0)
+		for i in 6:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("res://shots/27_talk.png")
+		print("shot 27_talk")
+		return
 
 	# Mitten im Schwung: aus dem Lauf an den Träger über der Schlucht
 	while player.dead:
@@ -269,9 +300,154 @@ func _test(player: Node3D) -> void:
 	await _frames(10)
 	Input.action_press("move_forward")
 	Input.action_press("sprint")
-	await _frames(360)
+	for i in 400:
+		await get_tree().physics_frame
+		if Game.transitioning:
+			break
 	Input.action_release("move_forward")
 	Input.action_release("sprint")
-	_check("falling into the shaft ends the layer", Game.ended, player.global_position)
+	_check("falling into the shaft starts the descent to layer II", Game.transitioning, player.global_position)
 	_check("ambient looped past its 16 s", amb.playing and amb.get_playback_position() < amb.stream.get_length(), "pos %.1f s" % amb.get_playback_position())
+	print("TEST DONE")
+
+
+# --- Layer II -----------------------------------------------------------
+
+func _find_npc(look: String) -> Node:
+	for node in get_tree().get_nodes_in_group("interactable"):
+		if node.get("look") == look:
+			return node
+	return null
+
+
+func _kill_all() -> void:
+	for e in get_tree().get_nodes_in_group("enemy"):
+		e.take_damage(9999.0, e.global_position)
+
+
+## Klickt sich durch ein Gespräch. prefer: Textstücke in der Reihenfolge, in
+## der Antworten gewählt werden sollen; jedes wird höchstens einmal benutzt.
+func _talk_auto(prefer: Array) -> void:
+	var used := {}
+	for step in 60:
+		if not Game.talking:
+			return
+		if Game._talk_choices.is_empty():
+			Game.talk_advance()
+		else:
+			var pick := Game._talk_choices.size() - 1
+			var found := false
+			for want in prefer:
+				if used.has(want) or found:
+					continue
+				for i in Game._talk_choices.size():
+					if String(Game._talk_choices[i]["text"]).contains(want):
+						pick = i
+						used[want] = true
+						found = true
+						break
+			Game.talk_choose(pick)
+		await _frames(2)
+
+
+## Stellt die Figur hin, hakt den Punkt an und wartet passiv ab.
+func _hop(player: Node3D, from: Vector3, target: Vector3, frames := 260) -> Vector3:
+	player.global_position = from
+	player.velocity = Vector3.ZERO
+	player.grapple_cd = 0.0
+	await _frames(15)
+	_look_at(player, target)
+	await _frames(4)
+	player._try_grapple()
+	if not player.grappling:
+		print("  hop: hook did not fire from ", from)
+	await _frames(frames)
+	return player.global_position
+
+
+func _test_layer2(player: Node3D) -> void:
+	var level: Node = get_parent().get_node("Level")
+	await _frames(30)
+	_check("layer II builds with its own mood", level.layer_id == 2 and level.fog_color.r > level.fog_color.b, level.fog_color)
+	_check("enemies and people are in place", get_tree().get_nodes_in_group("enemy").size() == 7 and _find_npc("vesper") != null and _find_npc("trader") != null)
+
+	# 1) Fisher
+	var fisher := _find_npc("fisher")
+	player.global_position = fisher.global_position + Vector3(-1.6, 0.1, 0.8)
+	await _frames(10)
+	_check("fisher is in reach, prompt shows", player._focus == fisher, player._prompt)
+	fisher.interact(player)
+	_check("talk opens and blocks movement", Game.talking and Game.busy())
+	await _talk_auto(["Wer bist", "Wie komme ich", "Wo geht es weiter"])
+	_check("fisher sets the route to Naht", not Game.talking and Game.has_flag("l2_met_fisher") and Game.has_flag("fisher_who") and Game.objective.contains("Naht"), Game.objective)
+
+	# 2) Die Hänge: drei passive Sprünge
+	_kill_all()
+	var p: Vector3 = await _hop(player, Vector3(0, 0.1, -8), Vector3(0, 6.4, -29))
+	_check("hop 1 lands on the first hang", p.z < -27.5 and p.z > -55.0 and absf(p.x) < 8.0 and absf(p.y) < 0.6, p)
+	p = await _hop(player, Vector3(2, 0.1, -54), Vector3(14, 6.4, -76))
+	_check("hop 2 lands on the second hang", p.z < -74.5 and p.z > -104.0 and p.x > 4.0 and p.x < 32.0 and absf(p.y) < 0.6, p)
+	p = await _hop(player, Vector3(16, 0.1, -103), Vector3(16, 7.4, -124))
+	_check("hop 3 lands inside Naht", p.z < -122.5 and p.z > -186.0 and p.x > -10.0 and p.x < 42.0 and absf(p.y) < 0.6, p)
+	_check("arrival sets checkpoint and objective", Game.has_flag("t2:naht") and Game.saved_checkpoint != null, Game.objective)
+
+	# 3) Vesper: Auftrag annehmen
+	var vesper := _find_npc("vesper")
+	player.global_position = vesper.global_position + Vector3(-1.8, 0.1, 0)
+	player.velocity = Vector3.ZERO
+	await _frames(10)
+	vesper.interact(player)
+	await _talk_auto(["Arm zeigen", "War ich", "Wer ist die CSRU", "Was willst du", "Ich mache es"])
+	_check("quest accepted, mast area wakes up", Game.has_flag("l2_quest") and Game.has_flag("vesper_honest") and level._mast_switch.enabled and get_tree().get_nodes_in_group("enemy").size() == 6, Game.objective)
+
+	# 4) Krämer: kaufen, und nicht kaufen können
+	var trader := _find_npc("trader")
+	Game.scrap = 100
+	trader.interact(player)
+	await _talk_auto(["Gaskartusche", "Nichts"])
+	_check("trader sells the gas cartridge", Game.gas_charges() == 3.0 and Game.scrap == 40, "scrap %d" % Game.scrap)
+	Game.scrap = 10
+	trader.interact(player)
+	await _talk_auto(["Panzerplatte", "Nichts"])
+	_check("no scrap, no deal", not Game.upgrades.has("plating") and Game.scrap == 10 and not Game.talking)
+
+	# 5) Zum Signalmast, einschalten, zurück
+	p = await _hop(player, Vector3(16, 0.1, -185.6), Vector3(16, 6.4, -208))
+	_check("hop to the mast platform", p.z < -206.5 and p.z > -248.0 and absf(p.y) < 0.6, p)
+	_kill_all()
+	player.health = Game.max_health()
+	player.global_position = level._mast_switch.global_position + Vector3(0, 0.1, 1.5)
+	player.velocity = Vector3.ZERO
+	await _frames(10)
+	level._mast_switch.interact(player)
+	await _frames(100)
+	_check("mast is on, beacon lit", Game.has_flag("l2_mast_on") and level._beacon_light.light_energy > 4.0, Game.objective)
+	p = await _hop(player, Vector3(16, 0.1, -206.6), Vector3(16, 7.4, -184))
+	_check("hop back into Naht", p.z > -186.0 and p.z < -122.5 and absf(p.y) < 0.6, p)
+
+	# 6) Vesper: Belohnung und Finale
+	var level_before := Game.level * 10000 + Game.xp
+	var scrap_before := Game.scrap
+	player.global_position = vesper.global_position + Vector3(-1.8, 0.1, 0)
+	player.velocity = Vector3.ZERO
+	await _frames(10)
+	vesper.interact(player)
+	await _talk_auto(["Ich kämpfe"])
+	_check("reward paid, finale triggered", Game.level * 10000 + Game.xp > level_before and Game.scrap == scrap_before + 40 and Game.has_flag("l2_finale") and Game.has_flag("vesper_fight"), "scrap %d -> %d" % [scrap_before, Game.scrap])
+	Engine.time_scale = 6.0
+	for i in 2400:
+		await get_tree().physics_frame
+		if Game.ended:
+			break
+	Engine.time_scale = 1.0
+	_check("CSRU broadcast ends the act", Game.ended)
+
+	# 7) Spielstand: schreiben, löschen, zurücklesen
+	var snapshot := JSON.stringify(Game.to_save())
+	var want_level := Game.level
+	var want_scrap := Game.scrap
+	Game.new_game()
+	var wiped := Game.layer == 1 and Game.flags.is_empty() and Game.upgrades.is_empty() and Game.level == 1
+	Game.from_save(JSON.parse_string(snapshot))
+	_check("save round trip restores progress", wiped and Game.layer == 2 and Game.level == want_level and Game.has_flag("l2_mast_on") and Game.upgrades.has("gas_tank") and Game.scrap == want_scrap and Game.saved_checkpoint != null, "layer %d, level %d, scrap %d" % [Game.layer, Game.level, Game.scrap])
 	print("TEST DONE")

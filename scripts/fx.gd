@@ -169,3 +169,24 @@ static func gas_puff(parent: Node, pos: Vector3, dir: Vector3) -> void:
 	var tw := p.create_tween()
 	tw.tween_interval(1.0)
 	tw.tween_callback(p.queue_free)
+
+
+## Kurzer schwebender Text (z. B. "+8 Schrott").
+static func float_text(parent: Node, pos: Vector3, text: String, color: Color) -> void:
+	var label := Label3D.new()
+	label.text = text
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.fixed_size = true
+	label.pixel_size = 0.0013
+	label.font_size = 30
+	label.outline_size = 8
+	label.modulate = color
+	label.outline_modulate = Color(0, 0, 0, 0.9)
+	parent.add_child(label)
+	label.global_position = pos
+	var tw := label.create_tween()
+	tw.tween_property(label, "global_position:y", pos.y + 1.6, 1.1)
+	tw.parallel().tween_property(label, "modulate:a", 0.0, 1.1).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(label, "outline_modulate:a", 0.0, 1.1).set_ease(Tween.EASE_IN)
+	tw.tween_callback(label.queue_free)

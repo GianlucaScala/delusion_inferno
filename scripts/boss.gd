@@ -169,6 +169,7 @@ func _die() -> void:
 		Fx.debris(scene, global_position + Vector3(randf_range(-1.5, 1.5), 2.0 + i, randf_range(-1.5, 1.5)), _shell_mat.duplicate(), 8)
 	Fx.shock_ring(scene, global_position + Vector3(0, 0.3, 0), 30.0, 1.0, ENTITY)
 	Game.add_xp(xp_reward)
+	Game.add_scrap(60)
 	Game.boss_ended.emit()
 	Sfx.play("boss_die")
 	died.emit(self)
@@ -309,6 +310,7 @@ func _summon() -> void:
 		e.position = pos
 		e.alerted = true
 		e.xp_reward = 15
+		e.scrap_reward = 0
 		get_parent().add_child(e)
 		Fx.impact(get_tree().current_scene, pos + Vector3(0, 1, 0), Vector3.UP, ENTITY)
 

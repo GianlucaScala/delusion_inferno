@@ -23,6 +23,13 @@ func _init() -> void:
 	materials["light_entity"] = Fx.glow_material(Color(0.62, 0.18, 1.0), 6.0)
 	materials["light_abyss"] = Fx.glow_material(Color(0.55, 0.12, 1.0), 14.0)
 	materials["flesh"] = _flat(Color(0.33, 0.12, 0.16), 0.1, 0.55)
+	# Flickwerk der Siedlungen
+	materials["patch_red"] = _flat(Color(0.36, 0.12, 0.1), 0.0, 0.85)
+	materials["patch_teal"] = _flat(Color(0.1, 0.27, 0.27), 0.0, 0.85)
+	materials["patch_ochre"] = _flat(Color(0.42, 0.31, 0.12), 0.0, 0.85)
+	materials["cloth"] = _flat(Color(0.5, 0.46, 0.4), 0.0, 0.95)
+	# "_far": gleiche Optik, wirft aber keinen Schatten (Decken, ferne Wände)
+	materials["mega_far"] = materials["mega"]
 
 
 func _concrete(color: Color, panel: float, seam: float) -> ShaderMaterial:
@@ -109,7 +116,7 @@ func commit() -> void:
 		mmi.name = "Boxes_" + kind
 		mmi.multimesh = mm
 		mmi.material_override = materials[kind]
-		if kind.begins_with("light"):
+		if kind.begins_with("light") or kind.ends_with("_far"):
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mmi)
 
